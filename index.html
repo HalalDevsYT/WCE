@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Web Code Editor</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.34.1/min/vs/loader.min.js"></script>
+    <script src="https://unpkg.com/monaco-editor@0.34.1/min/vs/loader.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/yjs@13.6.8/dist/y.min.js"></script>
@@ -312,6 +312,13 @@
         .highlight {
             background-color: var(--accent-bg);
         }
+
+        #editor-fallback {
+            display: none;
+            padding: 20px;
+            color: #ff5555;
+            text-align: center;
+        }
     </style>
 </head>
 <body data-theme="dark">
@@ -354,6 +361,13 @@
             <div id="tabs"></div>
             <div id="editor"></div>
             <div id="split-editor" style="display: none;"></div>
+            <div id="editor-fallback">
+                Failed to load the editor. Possible causes:<br>
+                - Internet connection issue.<br>
+                - CDN loading failure (check console).<br>
+                - Try refreshing the page or using a different browser.<br>
+                - Check console (F12) for detailed errors.
+            </div>
             <div id="preview">
                 <iframe id="preview-iframe"></iframe>
             </div>
@@ -448,46 +462,92 @@
             return cloned;
         }
 
-        // Initialize Monaco Editor
-        function initializeMonaco() {
+        // Initialize Monaco Editor with enhanced diagnostics
+        function initializeMonaco(attempt = 1, maxAttempts = 3) {
             if (isMonacoLoaded) {
                 console.log('Monaco already loaded, skipping initialization.');
                 return;
             }
+            const editorDiv = document.getElementById('editor');
+            const splitEditorDiv = document.getElementById('split-editor');
+            if (!editorDiv || !splitEditorDiv) {
+                if (attempt < maxAttempts) {
+                    console.log(`DOM not ready, retrying Monaco initialization (attempt ${attempt}/${maxAttempts})...`);
+                    setTimeout(() => initializeMonaco(attempt + 1, maxAttempts), 1000);
+                } else {
+                    console.error('DOM not ready after max attempts. Showing fallback.');
+                    document.getElementById('editor-fallback').style.display = 'block';
+                }
+                return;
+            }
+
             try {
-                // Reset AMD loader registry
-                require('vs/editor/editor.main', undefined, undefined, true);
-                require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.34.1/min/vs' } });
+                console.log(`Attempting to load Monaco Editor (attempt ${attempt}/${maxAttempts})...`);
+                console.log('Require status:', typeof require, 'Monaco status:', typeof monaco);
+                if (typeof require === 'undefined') {
+                    throw new Error('Require.js not loaded.');
+                }
+
+                // Reset and configure require
+                require.undef('vs/editor/editor.main');
+                require.config({
+                    paths: {
+                        'vs': 'https://unpkg.com/monaco-editor@0.34.1/min/vs'
+                    }
+                });
+
                 require(['vs/editor/editor.main'], function() {
-                    console.log('Monaco Editor loaded.');
+                    console.log('Monaco Editor loaded successfully. Monaco status:', typeof monaco);
+                    if (typeof monaco === 'undefined') {
+                        throw new Error('Monaco module not defined after require.');
+                    }
                     isMonacoLoaded = true;
-                    editor = monaco.editor.create(document.getElementById('editor'), {
-                        value: files[currentFile],
-                        language: 'javascript',
-                        theme: 'vs-dark',
-                        automaticLayout: false,
-                        fontSize: 14,
-                        tabSize: 4,
-                        lineNumbers: 'on',
-                        wordWrap: 'off'
-                    });
-
-                    splitEditor = monaco.editor.createDiffEditor(document.getElementById('split-editor'), {
-                        theme: 'vs-dark',
-                        automaticLayout: false
-                    });
-
-                    initializeEditor();
+                    try {
+                        editor = monaco.editor.create(editorDiv, {
+                            value: files[currentFile],
+                            language: 'javascript',
+                            theme: 'vs-dark',
+                            automaticLayout: true,
+                            fontSize: 14,
+                            tabSize: 4,
+                            lineNumbers: 'on',
+                            wordWrap: 'off'
+                        });
+                        splitEditor = monaco.editor.createDiffEditor(splitEditorDiv, {
+                            theme: 'vs-dark',
+                            automaticLayout: true
+                        });
+                        initializeEditor();
+                    } catch (e) {
+                        console.error('Editor Creation Error:', e.message, e.stack);
+                        throw e;
+                    }
                 }, function(err) {
-                    console.error('Monaco Load Error:', err);
-                    alert('Failed to load Monaco Editor. Please refresh the page.');
+                    console.error('Monaco Load Error:', err.requireType, err.message, err.stack);
+                    if (attempt < maxAttempts) {
+                        console.log(`Retrying Monaco initialization (attempt ${attempt + 1}/${maxAttempts})...`);
+                        setTimeout(() => initializeMonaco(attempt + 1, maxAttempts), 2000);
+                    } else {
+                        console.error('Failed to load Monaco Editor after max attempts.');
+                        document.getElementById('editor-fallback').style.display = 'block';
+                    }
                 });
             } catch (e) {
-                console.error('Monaco Initialization Error:', e);
+                console.error('Monaco Initialization Error:', e.message, e.stack);
+                if (attempt < maxAttempts) {
+                    console.log(`Retrying Monaco initialization (attempt ${attempt + 1}/${maxAttempts})...`);
+                    setTimeout(() => initializeMonaco(attempt + 1, maxAttempts), 2000);
+                } else {
+                    console.error('Failed to initialize Monaco Editor after max attempts.');
+                    document.getElementById('editor-fallback').style.display = 'block';
+                }
             }
         }
 
-        initializeMonaco();
+        // Start initialization after DOM is loaded
+        document.addEventListener('DOMContentLoaded', () => {
+            initializeMonaco();
+        });
 
         function initializeEditor() {
             try {
@@ -839,7 +899,7 @@
                     for (const file of uploadedFiles) {
                         const reader = new FileReader();
                         reader.onload = (e) => {
-                            const path = `Uploads/${file.name}`;
+                            const path = `uploads/${file.name}`;
                             if (!files[path]) {
                                 files[path] = e.target.result;
                                 fileHistory[path] = [{ content: e.target.result, position: 0 }];
@@ -886,26 +946,26 @@
                                 <button class="delete-btn">X</button>
                             `;
                             if (tree[key] === currentFile) {
-                                fileItem.classList.add('selected');
+                                fileItem.classList.add('active');
                             }
-                            const fileNameSpan = fileItem.querySelector('.file-name');
-                            const deleteBtn = fileItem.querySelector('.delete-btn');
-                            fileNameSpan.addEventListener('click', () => openFile(tree[key]));
-                            deleteBtn.addEventListener('click', () => deleteFile(tree[key]));
+                            fileItem.querySelector('.file-name').addEventListener('click', () => openFile(tree[key]));
+                            fileItem.querySelector('.delete-btn').addEventListener('click', () => deleteFile(tree[key]));
                             fileItem.addEventListener('contextmenu', (e) => {
                                 e.preventDefault();
                                 renameFile(tree[key]);
                             });
                             parentElement.appendChild(fileItem);
                         } else {
-                            const folderDiv = document.createElement('div');
-                            folderDiv.className = 'folder-div';
-                            folderDiv.style.paddingLeft = `${10 + depth * 10}px`;
-                            folderDiv.textContent = key;
-                            parentElement.appendChild(folderDiv);
+                            const folderItem = document.createElement('div');
+                            folderItem.className = 'folder-item';
+                            folderItem.style.paddingLeft = `${10 + depth * 10}px`;
+                            folderItem.textContent = key;
+                            parentElement.appendChild(folderItem);
                             renderTree(tree[key], parentElement, depth + 1);
                         }
                     }
+                }
+
                 function updateTabs() {
                     const tabs = document.getElementById('tabs');
                     tabs.innerHTML = '';
@@ -919,6 +979,8 @@
                         tab.addEventListener('click', () => openFile(fileName));
                         tabs.appendChild(tab);
                     });
+                }
+
                 function openFile(fileName) {
                     if (!openTabs.includes(fileName)) {
                         openTabs.push(fileName);
@@ -927,16 +989,16 @@
                     editor.setValue(files[fileName]);
                     document.getElementById('language-selector').value = getLanguage(fileName);
                     document.getElementById('search-bar').value = '';
-                    editor.setSelection(new monaco.Selection(0,0,0,0));
+                    editor.setSelection(new monaco.Selection(0, 0, 0, 0));
                     updateFileExplorer();
-                    monaco.editor.setModelLanguage(language);
+                    monaco.editor.setModelLanguage(editor.getModel(), getLanguage(fileName));
                     if (isSplitView && splitFile) {
                         updateSplitView();
                     }
                     if (getLanguage(fileName) === 'html') {
                         togglePreview(true);
                     } else {
-                        togglePreview();
+                        togglePreview(false);
                     }
                     lintCode(files[fileName]);
                     editor.layout();
@@ -952,7 +1014,7 @@
                         openTabs.push(fileName);
                         editor.setValue('');
                         updateFileExplorer();
-                        monaco.editor.setModelLanguage(language);
+                        monaco.editor.setModelLanguage(editor.getModel(), getLanguage(fileName));
                         editor.layout();
                     }
                 }
@@ -972,7 +1034,7 @@
                             currentFile = openTabs[0] || null;
                             editor.setValue(currentFile ? files[currentFile] : '');
                             if (currentFile) {
-                                monaco.editor.setModelLanguage(language);
+                                monaco.editor.setModelLanguage(editor.getModel(), getLanguage(currentFile));
                             }
                         }
                         if (fileName === splitFile) {
@@ -1188,7 +1250,7 @@
                 }
 
                 function openSettings() {
-                    document.getElementById('settings-panel').style.display = 'flex';
+                    document.getElementById('settings-panel').style.display = 'block';
                 }
 
                 function applySettings() {
@@ -1205,7 +1267,7 @@
                             editor.updateOptions({ fontSize, tabSize, lineNumbers, wordWrap });
                             if (isSplitView) splitEditor.updateOptions({ fontSize, tabSize, lineNumbers, wordWrap });
                         } else {
-                            alert('Invalid settings: Font size must be 8–24, min sidebar width 100–300, max sidebar width 300–600.');
+                            alert('Font size must be 8–24, min sidebar width 100–300, max sidebar width 300–600.');
                         }
                         closeSettings();
                     } catch (e) {
