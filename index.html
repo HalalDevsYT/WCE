@@ -1,0 +1,1233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web Code Editor</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.34.1/min/vs/loader.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/yjs@13.6.8/dist/y.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/y-websocket@1.5.0/dist/y-websocket.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/monaco-yjs@0.2.0/dist/monaco-yjs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/eslint@8.57.0/eslint.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
+    <style>
+        :root {
+            --bg-color: #1e1e1e;
+            --text-color: #ffffff;
+            --header-bg: #252526;
+            --accent-bg: #007acc;
+            --hover-bg: #2a2d2e;
+            --tab-bg: #2a2d2e;
+            --tab-active-bg: #1e1e1e;
+            --border-color: #3c3c3c;
+            --output-bg: #1e1e1e;
+            --panel-bg: #252526;
+            --input-bg: #1e1e1e;
+            --explorer-bg: #1e1e1e;
+            --terminal-bg: #1e1e1e;
+        }
+
+        [data-theme="light"] {
+            --bg-color: #ffffff;
+            --text-color: #000000;
+            --header-bg: #f3f3f3;
+            --accent-bg: #007acc;
+            --hover-bg: #e0e0e0;
+            --tab-bg: #e0e0e0;
+            --tab-active-bg: #ffffff;
+            --border-color: #d0d0d0;
+            --output-bg: #f3f3f3;
+            --panel-bg: #f3f3f3;
+            --input-bg: #ffffff;
+            --explorer-bg: #ffffff;
+            --terminal-bg: #ffffff;
+        }
+
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            font-family: Arial, sans-serif;
+            overflow: hidden;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+        }
+
+        #container {
+            display: flex;
+            height: 100vh;
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        #sidebar {
+            width: 250px;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            display: flex;
+            flex-direction: column;
+            min-width: 150px;
+            max-width: 400px;
+            position: relative;
+            overflow: hidden;
+            z-index: 1;
+        }
+
+        #resize-handle {
+            position: absolute;
+            right: 0;
+            top: 0;
+            width: 8px;
+            height: 100%;
+            background: var(--accent-bg);
+            cursor: ew-resize;
+            z-index: 2;
+        }
+
+        #resize-handle:hover {
+            background: #00aaff;
+        }
+
+        #file-explorer {
+            flex: 1;
+            padding: 10px;
+            overflow-y: auto;
+            background-color: var(--explorer-bg);
+        }
+
+        .folder-item {
+            padding: 5px;
+            cursor: pointer;
+            user-select: none;
+            background-color: var(--explorer-bg);
+        }
+
+        .folder-item:hover {
+            background-color: var(--hover-bg);
+        }
+
+        .file-item {
+            padding: 5px 5px 5px 20px;
+            cursor: pointer;
+            user-select: none;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background-color: var(--explorer-bg);
+        }
+
+        .file-item:hover {
+            background-color: var(--hover-bg);
+        }
+
+        .file-item.active {
+            background-color: var(--accent-bg);
+        }
+
+        .file-item button {
+            background: none;
+            border: none;
+            color: #ff5555;
+            cursor: pointer;
+            display: none;
+        }
+
+        .file-item:hover button {
+            display: inline;
+        }
+
+        #editor-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        #tabs {
+            background-color: var(--header-bg);
+            display: flex;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .tab {
+            padding: 8px 15px;
+            color: var(--text-color);
+            cursor: pointer;
+            background-color: var(--tab-bg);
+            border-right: 1px solid var(--border-color);
+        }
+
+        .tab.active {
+            background-color: var(--tab-active-bg);
+            color: var(--accent-bg);
+        }
+
+        .tab:hover {
+            background-color: var(--hover-bg);
+        }
+
+        #editor, #split-editor {
+            flex: 1;
+            min-height: 200px;
+            position: relative;
+        }
+
+        #preview {
+            height: 200px;
+            background-color: #ffffff;
+            border-top: 1px solid var(--border-color);
+            display: none;
+            resize: vertical;
+            overflow: auto;
+        }
+
+        #preview iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+
+        #terminal {
+            height: 150px;
+            background-color: var(--terminal-bg);
+            border-top: 1px solid var(--border-color);
+            display: none;
+            resize: vertical;
+            overflow: hidden;
+        }
+
+        #top-bar {
+            background-color: var(--header-bg);
+            padding: 5px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        #top-bar button, #top-bar select, #top-bar input {
+            background: none;
+            border: 1px solid var(--border-color);
+            color: var(--text-color);
+            padding: 5px 10px;
+            cursor: pointer;
+            border-radius: 3px;
+        }
+
+        #top-bar button:hover, #top-bar select:hover, #top-bar input:hover {
+            background-color: var(--hover-bg);
+        }
+
+        #search-bar {
+            width: 150px;
+        }
+
+        #more-options-btn {
+            font-size: 16px;
+        }
+
+        #more-options-menu {
+            display: none;
+            position: absolute;
+            top: 40px;
+            right: 10px;
+            background: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 3px;
+            z-index: 1000;
+            padding: 5px 0;
+        }
+
+        #more-options-menu button {
+            display: block;
+            width: 100%;
+            text-align: left;
+            padding: 8px 15px;
+            background: none;
+            border: none;
+            color: var(--text-color);
+            cursor: pointer;
+        }
+
+        #more-options-menu button:hover {
+            background-color: var(--hover-bg);
+        }
+
+        #output {
+            height: 150px;
+            background-color: var(--output-bg);
+            color: var(--text-color);
+            padding: 10px;
+            overflow-y: auto;
+            border-top: 1px solid var(--border-color);
+            display: none;
+        }
+
+        #status-bar {
+            background-color: var(--accent-bg);
+            color: var(--text-color);
+            padding: 5px;
+            font-size: 12px;
+        }
+
+        #settings-panel {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: var(--panel-bg);
+            color: var(--text-color);
+            padding: 20px;
+            border: 1px solid var(--border-color);
+            border-radius: 5px;
+            z-index: 1000;
+            min-width: 300px;
+        }
+
+        #settings-panel label {
+            display: block;
+            margin: 10px 0;
+        }
+
+        #settings-panel input, #settings-panel select {
+            background: var(--input-bg);
+            color: var(--text-color);
+            border: 1px solid var(--border-color);
+            padding: 5px;
+            width: 100%;
+        }
+
+        #settings-panel button {
+            background: var(--accent-bg);
+            border: none;
+            color: var(--text-color);
+            padding: 8px;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+
+        .highlight {
+            background-color: var(--accent-bg);
+        }
+    </style>
+</head>
+<body data-theme="dark">
+    <div id="container">
+        <div id="sidebar">
+            <div id="top-bar">
+                <select id="language-selector">
+                    <option value="javascript">JavaScript</option>
+                    <option value="html">HTML</option>
+                    <option value="css">CSS</option>
+                    <option value="python">Python</option>
+                </select>
+                <select id="theme-selector">
+                    <option value="vs-dark">Dark</option>
+                    <option value="vs">Light</option>
+                </select>
+                <input id="search-bar" type="text" placeholder="Search in file..." />
+                <button id="more-options-btn">⋮</button>
+                <div id="more-options-menu">
+                    <button id="new-file-btn">New File</button>
+                    <button id="upload-btn">Upload</button>
+                    <button id="undo-btn">Undo</button>
+                    <button id="redo-btn">Redo</button>
+                    <button id="save-btn">Save</button>
+                    <button id="format-btn">Format</button>
+                    <button id="download-btn">Download</button>
+                    <button id="run-btn">Run</button>
+                    <button id="preview-btn">Preview</button>
+                    <button id="split-view-btn">Split View</button>
+                    <button id="terminal-btn">Toggle Terminal</button>
+                    <button id="collab-btn">Toggle Collaboration</button>
+                    <button id="dark-mode-btn">Light Mode</button>
+                    <button id="settings-btn">Settings</button>
+                </div>
+            </div>
+            <div id="file-explorer"></div>
+            <div id="resize-handle"></div>
+        </div>
+        <div id="editor-container">
+            <div id="tabs"></div>
+            <div id="editor"></div>
+            <div id="split-editor" style="display: none;"></div>
+            <div id="preview">
+                <iframe id="preview-iframe"></iframe>
+            </div>
+            <div id="terminal"></div>
+            <div id="output">
+                <button id="clear-output-btn" style="display: none;">Clear</button>
+            </div>
+            <div id="status-bar">Ln 1, Col 1</div>
+        </div>
+        <div id="settings-panel">
+            <h3>Settings</h3>
+            <label>Font Size: <input id="font-size" type="number" min="8" max="24" value="14"></label>
+            <label>Tab Size: <select id="tab-size">
+                <option value="2">2</option>
+                <option value="4" selected>4</option>
+                <option value="8">8</option>
+            </select></label>
+            <label>Line Numbers: <select id="line-numbers">
+                <option value="on" selected>On</option>
+                <option value="off">Off</option>
+            </select></label>
+            <label>Word Wrap: <select id="word-wrap">
+                <option value="off" selected>Off</option>
+                <option value="on">On</option>
+            </select></label>
+            <label>Sidebar Min Width: <input id="sidebar-min-width" type="number" min="100" max="300" value="150"></label>
+            <label>Sidebar Max Width: <input id="sidebar-max-width" type="number" min="300" max="600" value="400"></label>
+            <label>Enable Linting: <input id="enable-linting" type="checkbox" checked></label>
+            <h4>Custom Theme</h4>
+            <label>Background: <input id="theme-bg" type="color" value="#1e1e1e"></label>
+            <label>Text: <input id="theme-text" type="color" value="#ffffff"></label>
+            <label>Header: <input id="theme-header" type="color" value="#252526"></label>
+            <label>Accent: <input id="theme-accent" type="color" value="#007acc"></label>
+            <label>Hover: <input id="theme-hover" type="color" value="#2a2d2e"></label>
+            <button id="apply-theme-btn">Apply Theme</button>
+            <button id="apply-settings-btn">Apply</button>
+            <button id="close-settings-btn">Close</button>
+        </div>
+    </div>
+
+    <script>
+        // Global error handler
+        window.onerror = (msg, url, lineNo, columnNo, error) => {
+            console.error(`Script Error: ${msg}\nURL: ${url}\nLine: ${lineNo}\nColumn: ${columnNo}\nStack: ${error?.stack}`);
+            return false;
+        };
+
+        let editor = null;
+        let splitEditor = null;
+        let terminal = null;
+        let yjsProvider = null;
+        let files = {
+            'src/file1.js': '// Sample JavaScript file\nconsole.log("Hello, World!");',
+            'src/file2.html': '<!DOCTYPE html>\n<html>\n<body>\n<h1>Hello</h1>\n</body>\n</html>'
+        };
+        let fileHistory = {
+            'src/file1.js': [{ content: files['src/file1.js'], position: 0 }],
+            'src/file2.html': [{ content: files['src/file2.html'], position: 0 }]
+        };
+        let historyIndex = {
+            'src/file1.js': 0,
+            'src/file2.html': 0
+        };
+        let currentFile = 'src/file1.js';
+        let openTabs = ['src/file1.js'];
+        let isSplitView = false;
+        let splitFile = null;
+        let autoSaveTimeout = null;
+        let minSidebarWidth = 150;
+        let maxSidebarWidth = 400;
+        let isDarkMode = true;
+        let isTerminalVisible = false;
+        let isCollabEnabled = false;
+        let isMonacoLoaded = false;
+
+        function debounce(func, wait) {
+            let timeout;
+            return function executedFunction(...args) {
+                const later = () => {
+                    clearTimeout(timeout);
+                    func(...args);
+                };
+                clearTimeout(timeout);
+                timeout = setTimeout(later, wait);
+            };
+        }
+
+        // Clean up previous event listeners
+        function removeAllListeners(element, event) {
+            const cloned = element.cloneNode(true);
+            element.parentNode.replaceChild(cloned, element);
+            return cloned;
+        }
+
+        // Initialize Monaco Editor
+        function initializeMonaco() {
+            if (isMonacoLoaded) {
+                console.log('Monaco already loaded, skipping initialization.');
+                return;
+            }
+            try {
+                // Reset AMD loader registry
+                require('vs/editor/editor.main', undefined, undefined, true);
+                require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.34.1/min/vs' } });
+                require(['vs/editor/editor.main'], function() {
+                    console.log('Monaco Editor loaded.');
+                    isMonacoLoaded = true;
+                    editor = monaco.editor.create(document.getElementById('editor'), {
+                        value: files[currentFile],
+                        language: 'javascript',
+                        theme: 'vs-dark',
+                        automaticLayout: false,
+                        fontSize: 14,
+                        tabSize: 4,
+                        lineNumbers: 'on',
+                        wordWrap: 'off'
+                    });
+
+                    splitEditor = monaco.editor.createDiffEditor(document.getElementById('split-editor'), {
+                        theme: 'vs-dark',
+                        automaticLayout: false
+                    });
+
+                    initializeEditor();
+                }, function(err) {
+                    console.error('Monaco Load Error:', err);
+                    alert('Failed to load Monaco Editor. Please refresh the page.');
+                });
+            } catch (e) {
+                console.error('Monaco Initialization Error:', e);
+            }
+        }
+
+        initializeMonaco();
+
+        function initializeEditor() {
+            try {
+                // Terminal setup
+                terminal = new Terminal({
+                    theme: { background: isDarkMode ? '#1e1e1e' : '#ffffff', foreground: isDarkMode ? '#ffffff' : '#000000' }
+                });
+                terminal.open(document.getElementById('terminal'));
+                terminal.write('> ');
+                terminal.onData(data => {
+                    if (data === '\r') {
+                        const command = terminal._core.buffer.active.getLine(terminal._core.buffer.active.cursorY).translateToString(true).slice(2);
+                        executeTerminalCommand(command);
+                        terminal.write('\n> ');
+                    } else {
+                        terminal.write(data);
+                    }
+                });
+
+                // Linting setup
+                const eslint = new ESLint({
+                    useEslintrc: false,
+                    overrideConfig: {
+                        env: { browser: true, es2021: true },
+                        parserOptions: { ecmaVersion: 12, sourceType: 'module' },
+                        rules: {
+                            'no-unused-vars': 'warn',
+                            'no-console': 'off'
+                        }
+                    }
+                });
+
+                function lintCode(content) {
+                    if (!document.getElementById('enable-linting').checked || getLanguage(currentFile) !== 'javascript') return;
+                    eslint.lintText(content).then(results => {
+                        const markers = results[0].messages.map(msg => ({
+                            severity: msg.severity === 2 ? monaco.MarkerSeverity.Error : monaco.MarkerSeverity.Warning,
+                            startLineNumber: msg.line,
+                            startColumn: msg.column,
+                            endLineNumber: msg.endLine || msg.line,
+                            endColumn: msg.endColumn || msg.column + 1,
+                            message: msg.message
+                        }));
+                        monaco.editor.setModelMarkers(editor.getModel(), 'eslint', markers);
+                    }).catch(e => console.error('ESLint Error:', e));
+                }
+
+                // Keyboard shortcuts
+                editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, saveFile);
+                editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyR, runCode);
+                editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyF, () => {
+                    document.getElementById('search-bar').focus();
+                });
+                editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyN, newFile);
+                editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyD, downloadFile);
+                editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyZ, undo);
+                editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyY, redo);
+
+                // Button event listeners
+                let moreOptionsBtn = document.getElementById('more-options-btn');
+                let moreOptionsMenu = document.getElementById('more-options-menu');
+                let newFileBtn = document.getElementById('new-file-btn');
+                let uploadBtn = document.getElementById('upload-btn');
+                let undoBtn = document.getElementById('undo-btn');
+                let redoBtn = document.getElementById('redo-btn');
+                let saveBtn = document.getElementById('save-btn');
+                let formatBtn = document.getElementById('format-btn');
+                let downloadBtn = document.getElementById('download-btn');
+                let runBtn = document.getElementById('run-btn');
+                let previewBtn = document.getElementById('preview-btn');
+                let splitViewBtn = document.getElementById('split-view-btn');
+                let terminalBtn = document.getElementById('terminal-btn');
+                let collabBtn = document.getElementById('collab-btn');
+                let darkModeBtn = document.getElementById('dark-mode-btn');
+                let settingsBtn = document.getElementById('settings-btn');
+                let languageSelector = document.getElementById('language-selector');
+                let themeSelector = document.getElementById('theme-selector');
+                let clearOutputBtn = document.getElementById('clear-output-btn');
+                let searchBar = document.getElementById('search-bar');
+                let applyThemeBtn = document.getElementById('apply-theme-btn');
+                let applySettingsBtn = document.getElementById('apply-settings-btn');
+                let closeSettingsBtn = document.getElementById('close-settings-btn');
+
+                // Remove existing listeners
+                moreOptionsBtn = removeAllListeners(moreOptionsBtn, 'click');
+                moreOptionsMenu = document.getElementById('more-options-menu');
+                newFileBtn = removeAllListeners(newFileBtn, 'click');
+                uploadBtn = removeAllListeners(uploadBtn, 'click');
+                undoBtn = removeAllListeners(undoBtn, 'click');
+                redoBtn = removeAllListeners(redoBtn, 'click');
+                saveBtn = removeAllListeners(saveBtn, 'click');
+                formatBtn = removeAllListeners(formatBtn, 'click');
+                downloadBtn = removeAllListeners(downloadBtn, 'click');
+                runBtn = removeAllListeners(runBtn, 'click');
+                previewBtn = removeAllListeners(previewBtn, 'click');
+                splitViewBtn = removeAllListeners(splitViewBtn, 'click');
+                terminalBtn = removeAllListeners(terminalBtn, 'click');
+                collabBtn = removeAllListeners(collabBtn, 'click');
+                darkModeBtn = removeAllListeners(darkModeBtn, 'click');
+                settingsBtn = removeAllListeners(settingsBtn, 'click');
+                languageSelector = removeAllListeners(languageSelector, 'change');
+                themeSelector = removeAllListeners(themeSelector, 'change');
+                clearOutputBtn = removeAllListeners(clearOutputBtn, 'click');
+                searchBar = removeAllListeners(searchBar, 'input');
+                applyThemeBtn = removeAllListeners(applyThemeBtn, 'click');
+                applySettingsBtn = removeAllListeners(applySettingsBtn, 'click');
+                closeSettingsBtn = removeAllListeners(closeSettingsBtn, 'click');
+
+                // Add new listeners
+                moreOptionsBtn.addEventListener('click', () => {
+                    moreOptionsMenu.style.display = moreOptionsMenu.style.display === 'block' ? 'none' : 'block';
+                });
+
+                document.removeEventListener('click', handleOutsideClick);
+                document.addEventListener('click', handleOutsideClick);
+                function handleOutsideClick(e) {
+                    if (!moreOptionsBtn.contains(e.target) && !moreOptionsMenu.contains(e.target)) {
+                        moreOptionsMenu.style.display = 'none';
+                    }
+                }
+
+                newFileBtn.addEventListener('click', () => { newFile(); hideMoreOptions(); });
+                uploadBtn.addEventListener('click', () => { document.getElementById('file-input').click(); hideMoreOptions(); });
+                undoBtn.addEventListener('click', () => { undo(); hideMoreOptions(); });
+                redoBtn.addEventListener('click', () => { redo(); hideMoreOptions(); });
+                saveBtn.addEventListener('click', () => { saveFile(); hideMoreOptions(); });
+                formatBtn.addEventListener('click', () => { formatCode(); hideMoreOptions(); });
+                downloadBtn.addEventListener('click', () => { downloadFile(); hideMoreOptions(); });
+                runBtn.addEventListener('click', () => { runCode(); hideMoreOptions(); });
+                previewBtn.addEventListener('click', () => { togglePreview(); hideMoreOptions(); });
+                splitViewBtn.addEventListener('click', () => { toggleSplitView(); hideMoreOptions(); });
+                terminalBtn.addEventListener('click', () => { toggleTerminal(); hideMoreOptions(); });
+                collabBtn.addEventListener('click', () => { toggleCollaboration(); hideMoreOptions(); });
+                darkModeBtn.addEventListener('click', () => { toggleDarkMode(); hideMoreOptions(); });
+                settingsBtn.addEventListener('click', () => { openSettings(); hideMoreOptions(); });
+                languageSelector.addEventListener('change', changeLanguage);
+                themeSelector.addEventListener('change', changeTheme);
+                clearOutputBtn.addEventListener('click', clearOutput);
+                searchBar.addEventListener('input', debounce(searchInFile, 300));
+                applyThemeBtn.addEventListener('click', applyCustomTheme);
+                applySettingsBtn.addEventListener('click', applySettings);
+                closeSettingsBtn.addEventListener('click', closeSettings);
+
+                function hideMoreOptions() {
+                    moreOptionsMenu.style.display = 'none';
+                }
+
+                // File upload
+                let fileInput = document.getElementById('file-input');
+                if (!fileInput) {
+                    fileInput = document.createElement('input');
+                    fileInput.type = 'file';
+                    fileInput.id = 'file-input';
+                    fileInput.style.display = 'none';
+                    fileInput.multiple = true;
+                    document.body.appendChild(fileInput);
+                }
+                fileInput = removeAllListeners(fileInput, 'change');
+                fileInput.addEventListener('change', handleFileUpload);
+
+                let fileExplorer = document.getElementById('file-explorer');
+                fileExplorer = removeAllListeners(fileExplorer, 'dragover');
+                fileExplorer = removeAllListeners(fileExplorer, 'dragleave');
+                fileExplorer = removeAllListeners(fileExplorer, 'drop');
+                fileExplorer.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    fileExplorer.style.backgroundColor = 'var(--hover-bg)';
+                });
+                fileExplorer.addEventListener('dragleave', () => {
+                    fileExplorer.style.backgroundColor = 'var(--explorer-bg)';
+                });
+                fileExplorer.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    fileExplorer.style.backgroundColor = 'var(--explorer-bg)';
+                    handleFileUpload({ target: { files: e.dataTransfer.files } });
+                });
+
+                // Auto-save and history
+                editor.onDidChangeModelContent(() => {
+                    clearTimeout(autoSaveTimeout);
+                    autoSaveTimeout = setTimeout(() => {
+                        if (currentFile && !isCollabEnabled) {
+                            files[currentFile] = editor.getValue();
+                            console.log(`Auto-saved: ${currentFile}`);
+                            addToHistory(currentFile, files[currentFile]);
+                            lintCode(files[currentFile]);
+                        }
+                    }, 2000);
+                });
+
+                // Resize handler
+                let sidebar = document.getElementById('sidebar');
+                let resizeHandle = document.getElementById('resize-handle');
+                let isResizing = false;
+
+                resizeHandle = removeAllListeners(resizeHandle, 'mousedown');
+                resizeHandle.addEventListener('mousedown', (e) => {
+                    isResizing = true;
+                    document.addEventListener('mousemove', handleMouseMove);
+                    document.addEventListener('mouseup', handleMouseUp);
+                });
+
+                const handleMouseMove = debounce((e) => {
+                    if (isResizing) {
+                        const newWidth = Math.max(minSidebarWidth, Math.min(maxSidebarWidth, e.clientX));
+                        sidebar.style.width = `${newWidth}px`;
+                        editor.layout();
+                        if (isSplitView) splitEditor.layout();
+                        if (isTerminalVisible) terminal.refresh(0, terminal.rows - 1);
+                    }
+                }, 50);
+
+                function handleMouseUp() {
+                    isResizing = false;
+                    document.removeEventListener('mousemove', handleMouseMove);
+                    document.removeEventListener('mouseup', handleMouseUp);
+                    editor.layout();
+                    if (isSplitView) splitEditor.layout();
+                    if (isTerminalVisible) terminal.refresh(0, terminal.rows - 1);
+                }
+
+                window.removeEventListener('resize', handleWindowResize);
+                window.addEventListener('resize', handleWindowResize);
+                const handleWindowResize = debounce(() => {
+                    editor.layout();
+                    if (isSplitView) splitEditor.layout();
+                    if (isTerminalVisible) terminal.refresh(0, terminal.rows - 1);
+                }, 100);
+
+                function executeTerminalCommand(command) {
+                    try {
+                        const result = eval(command);
+                        terminal.writeln(result !== undefined ? String(result) : '');
+                    } catch (e) {
+                        terminal.writeln('Error: ' + e.message);
+                    }
+                }
+
+                function toggleTerminal() {
+                    isTerminalVisible = !isTerminalVisible;
+                    const terminalDiv = document.getElementById('terminal');
+                    terminalDiv.style.display = isTerminalVisible ? 'block' : 'none';
+                    if (isTerminalVisible) terminal.focus();
+                    editor.layout();
+                }
+
+                function toggleCollaboration() {
+                    try {
+                        isCollabEnabled = !isCollabEnabled;
+                        if (isCollabEnabled) {
+                            const ydoc = new Y.Doc();
+                            yjsProvider = new WebsocketProvider('wss://demos.yjs.dev', 'monaco-editor-room', ydoc);
+                            yjsProvider.on('status', event => {
+                                if (event.status === 'disconnected') {
+                                    console.warn('Collaboration disconnected');
+                                    alert('Collaboration server disconnected. Please try again.');
+                                    toggleCollaboration();
+                                }
+                            });
+                            const ytext = ydoc.getText('monaco');
+                            new MonacoBinding(ytext, editor.getModel(), new Set([editor]), yjsProvider.awareness);
+                            document.getElementById('collab-btn').textContent = 'Disable Collaboration';
+                        } else {
+                            if (yjsProvider) {
+                                yjsProvider.destroy();
+                                yjsProvider = null;
+                            }
+                            document.getElementById('collab-btn').textContent = 'Toggle Collaboration';
+                        }
+                    } catch (e) {
+                        console.error('Collaboration Error:', e);
+                        alert('Failed to enable collaboration. Please try again.');
+                        isCollabEnabled = false;
+                        document.getElementById('collab-btn').textContent = 'Toggle Collaboration';
+                    }
+                }
+
+                function applyCustomTheme() {
+                    const customTheme = {
+                        '--bg-color': document.getElementById('theme-bg').value,
+                        '--text-color': document.getElementById('theme-text').value,
+                        '--header-bg': document.getElementById('theme-header').value,
+                        '--accent-bg': document.getElementById('theme-accent').value,
+                        '--hover-bg': document.getElementById('theme-hover').value,
+                        '--tab-bg': document.getElementById('theme-header').value,
+                        '--tab-active-bg': document.getElementById('theme-bg').value,
+                        '--border-color': document.getElementById('theme-accent').value,
+                        '--output-bg': document.getElementById('theme-bg').value,
+                        '--panel-bg': document.getElementById('theme-header').value,
+                        '--input-bg': document.getElementById('theme-bg').value,
+                        '--explorer-bg': document.getElementById('theme-bg').value,
+                        '--terminal-bg': document.getElementById('theme-bg').value
+                    };
+                    for (const [key, value] of Object.entries(customTheme)) {
+                        document.documentElement.style.setProperty(key, value);
+                    }
+                    localStorage.setItem('customTheme', JSON.stringify(customTheme));
+                    terminal.options.theme = {
+                        background: customTheme['--terminal-bg'],
+                        foreground: customTheme['--text-color']
+                    };
+                }
+
+                // Load custom theme
+                const savedTheme = localStorage.getItem('customTheme');
+                if (savedTheme) {
+                    const customTheme = JSON.parse(savedTheme);
+                    for (const [key, value] of Object.entries(customTheme)) {
+                        document.documentElement.style.setProperty(key, value);
+                    }
+                    terminal.options.theme = {
+                        background: customTheme['--terminal-bg'],
+                        foreground: customTheme['--text-color']
+                    };
+                }
+
+                function addToHistory(fileName, content) {
+                    if (!fileHistory[fileName]) fileHistory[fileName] = [];
+                    const currentIndex = historyIndex[fileName] || 0;
+                    fileHistory[fileName] = fileHistory[fileName].slice(0, currentIndex + 1);
+                    fileHistory[fileName].push({ content, position: editor.getPosition() });
+                    historyIndex[fileName] = fileHistory[fileName].length - 1;
+                }
+
+                function undo() {
+                    if (historyIndex[currentFile] > 0) {
+                        historyIndex[currentFile]--;
+                        const entry = fileHistory[currentFile][historyIndex[currentFile]];
+                        editor.setValue(entry.content);
+                        editor.setPosition(entry.position);
+                        files[currentFile] = entry.content;
+                        editor.layout();
+                    }
+                }
+
+                function redo() {
+                    if (historyIndex[currentFile] < fileHistory[currentFile].length - 1) {
+                        historyIndex[currentFile]++;
+                        const entry = fileHistory[currentFile][historyIndex[currentFile]];
+                        editor.setValue(entry.content);
+                        editor.setPosition(entry.position);
+                        files[currentFile] = entry.content;
+                        editor.layout();
+                    }
+                }
+
+                function handleFileUpload(event) {
+                    const uploadedFiles = event.target.files;
+                    for (const file of uploadedFiles) {
+                        const reader = new FileReader();
+                        reader.onload = (e) => {
+                            const path = `Uploads/${file.name}`;
+                            if (!files[path]) {
+                                files[path] = e.target.result;
+                                fileHistory[path] = [{ content: e.target.result, position: 0 }];
+                                historyIndex[path] = 0;
+                                updateFileExplorer();
+                            }
+                        };
+                        reader.readAsText(file);
+                    }
+                }
+
+                function updateFileExplorer() {
+                    const fileExplorer = document.getElementById('file-explorer');
+                    fileExplorer.innerHTML = '';
+                    const tree = buildFileTree();
+                    renderTree(tree, fileExplorer, 0);
+                    updateTabs();
+                    console.log('File explorer styles:', getComputedStyle(fileExplorer).backgroundColor);
+                }
+
+                function buildFileTree() {
+                    const tree = {};
+                    for (const filePath in files) {
+                        const parts = filePath.split('/');
+                        let current = tree;
+                        for (let i = 0; i < parts.length - 1; i++) {
+                            const folder = parts[i];
+                            if (!current[folder]) current[folder] = {};
+                            current = current[folder];
+                        }
+                        current[parts[parts.length - 1]] = filePath;
+                    }
+                    return tree;
+                }
+
+                function renderTree(tree, parentElement, depth) {
+                    for (const key in tree) {
+                        if (typeof tree[key] === 'string') {
+                            const fileItem = document.createElement('div');
+                            fileItem.className = 'file-item';
+                            fileItem.style.paddingLeft = `${20 + depth * 10}px`;
+                            fileItem.innerHTML = `
+                                <span class="file-name">${key}</span>
+                                <button class="delete-btn">X</button>
+                            `;
+                            if (tree[key] === currentFile) {
+                                fileItem.classList.add('selected');
+                            }
+                            const fileNameSpan = fileItem.querySelector('.file-name');
+                            const deleteBtn = fileItem.querySelector('.delete-btn');
+                            fileNameSpan.addEventListener('click', () => openFile(tree[key]));
+                            deleteBtn.addEventListener('click', () => deleteFile(tree[key]));
+                            fileItem.addEventListener('contextmenu', (e) => {
+                                e.preventDefault();
+                                renameFile(tree[key]);
+                            });
+                            parentElement.appendChild(fileItem);
+                        } else {
+                            const folderDiv = document.createElement('div');
+                            folderDiv.className = 'folder-div';
+                            folderDiv.style.paddingLeft = `${10 + depth * 10}px`;
+                            folderDiv.textContent = key;
+                            parentElement.appendChild(folderDiv);
+                            renderTree(tree[key], parentElement, depth + 1);
+                        }
+                    }
+                function updateTabs() {
+                    const tabs = document.getElementById('tabs');
+                    tabs.innerHTML = '';
+                    openTabs.forEach(fileName => {
+                        const tab = document.createElement('div');
+                        tab.className = 'tab';
+                        tab.textContent = fileName.split('/').pop();
+                        if (fileName === currentFile) {
+                            tab.classList.add('active');
+                        }
+                        tab.addEventListener('click', () => openFile(fileName));
+                        tabs.appendChild(tab);
+                    });
+                function openFile(fileName) {
+                    if (!openTabs.includes(fileName)) {
+                        openTabs.push(fileName);
+                    }
+                    currentFile = fileName;
+                    editor.setValue(files[fileName]);
+                    document.getElementById('language-selector').value = getLanguage(fileName);
+                    document.getElementById('search-bar').value = '';
+                    editor.setSelection(new monaco.Selection(0,0,0,0));
+                    updateFileExplorer();
+                    monaco.editor.setModelLanguage(language);
+                    if (isSplitView && splitFile) {
+                        updateSplitView();
+                    }
+                    if (getLanguage(fileName) === 'html') {
+                        togglePreview(true);
+                    } else {
+                        togglePreview();
+                    }
+                    lintCode(files[fileName]);
+                    editor.layout();
+                }
+
+                function newFile() {
+                    const fileName = prompt('Enter file path (e.g., src/script.js):');
+                    if (fileName && !files[fileName]) {
+                        files[fileName] = '';
+                        fileHistory[fileName] = [{ content: '', position: 0 }];
+                        historyIndex[fileName] = 0;
+                        currentFile = fileName;
+                        openTabs.push(fileName);
+                        editor.setValue('');
+                        updateFileExplorer();
+                        monaco.editor.setModelLanguage(language);
+                        editor.layout();
+                    }
+                }
+
+                function saveFile() {
+                    files[currentFile] = editor.getValue();
+                    alert('File saved: ' + currentFile);
+                }
+
+                function deleteFile(fileName) {
+                    if (confirm(`Delete ${fileName}?`)) {
+                        delete files[fileName];
+                        delete fileHistory[fileName];
+                        delete historyIndex[fileName];
+                        openTabs = openTabs.filter(tab => tab !== fileName);
+                        if (fileName === currentFile) {
+                            currentFile = openTabs[0] || null;
+                            editor.setValue(currentFile ? files[currentFile] : '');
+                            if (currentFile) {
+                                monaco.editor.setModelLanguage(language);
+                            }
+                        }
+                        if (fileName === splitFile) {
+                            splitFile = null;
+                            toggleSplitView();
+                        }
+                        updateFileExplorer();
+                        editor.layout();
+                    }
+                }
+
+                function renameFile(fileName) {
+                    const newName = prompt(`Rename ${fileName} to:`, fileName);
+                    if (newName && newName !== fileName && !files[newName]) {
+                        files[newName] = files[fileName];
+                        fileHistory[newName] = fileHistory[fileName];
+                        historyIndex[newName] = historyIndex[fileName];
+                        delete files[fileName];
+                        delete fileHistory[fileName];
+                        delete historyIndex[fileName];
+                        if (fileName === currentFile) {
+                            currentFile = newName;
+                        }
+                        if (fileName === splitFile) {
+                            splitFile = newName;
+                        }
+                        openTabs = openTabs.map(tab => (tab === fileName ? newName : tab));
+                        updateFileExplorer();
+                        if (isSplitView) updateSplitView();
+                        editor.layout();
+                    }
+                }
+
+                function formatCode() {
+                    editor.getAction('editor.action.formatDocument').run();
+                    if (isSplitView) splitEditor.getOriginalEditor().getAction('editor.action.formatDocument').run();
+                    editor.layout();
+                }
+
+                function downloadFile() {
+                    if (confirm('Download all files as ZIP? Click Cancel to download only the current file.')) {
+                        const zip = new JSZip();
+                        for (const filePath in files) {
+                            zip.file(filePath, files[filePath]);
+                        }
+                        zip.generateAsync({ type: 'blob' }).then(blob => {
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = 'files.zip';
+                            a.click();
+                            URL.revokeObjectURL(url);
+                        });
+                    } else {
+                        const blob = new Blob([files[currentFile]], { type: 'text/plain' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = currentFile.split('/').pop();
+                        a.click();
+                        URL.revokeObjectURL(url);
+                    }
+                }
+
+                function togglePreview(force = false) {
+                    const preview = document.getElementById('preview');
+                    const isHtml = getLanguage(currentFile) === 'html';
+                    if (force || (isHtml && preview.style.display === 'none')) {
+                        if (isHtml) {
+                            preview.style.display = 'block';
+                            const iframe = document.getElementById('preview-iframe');
+                            iframe.srcdoc = files[currentFile];
+                        }
+                    } else {
+                        preview.style.display = 'none';
+                    }
+                    editor.layout();
+                }
+
+                function getLanguage(fileName) {
+                    const ext = fileName.split('.').pop();
+                    const map = {
+                        'js': 'javascript',
+                        'html': 'html',
+                        'css': 'css',
+                        'py': 'python'
+                    };
+                    return map[ext] || 'plaintext';
+                }
+
+                function changeLanguage() {
+                    const language = document.getElementById('language-selector').value;
+                    monaco.editor.setModelLanguage(editor.getModel(), language);
+                    if (language === 'html') {
+                        togglePreview(true);
+                    } else {
+                        togglePreview(false);
+                    }
+                    lintCode(editor.getValue());
+                    editor.layout();
+                }
+
+                function changeTheme() {
+                    const theme = document.getElementById('theme-selector').value;
+                    monaco.editor.setTheme(theme);
+                    if (isSplitView) splitEditor.setTheme(theme);
+                    editor.layout();
+                }
+
+                function toggleDarkMode() {
+                    isDarkMode = !isDarkMode;
+                    document.body.setAttribute('data-theme', isDarkMode ? 'dark' : 'light');
+                    document.getElementById('dark-mode-btn').textContent = isDarkMode ? 'Light Mode' : 'Dark Mode';
+                    terminal.options.theme = {
+                        background: isDarkMode ? '#1e1e1e' : '#ffffff',
+                        foreground: isDarkMode ? '#ffffff' : '#000000'
+                    };
+                }
+
+                function runCode() {
+                    if (getLanguage(currentFile) === 'javascript') {
+                        const output = document.getElementById('output');
+                        output.style.display = 'block';
+                        document.getElementById('clear-output-btn').style.display = 'inline';
+                        output.innerHTML = '<button id="clear-output-btn">Clear</button>';
+                        document.getElementById('clear-output-btn').addEventListener('click', clearOutput);
+                        try {
+                            const consoleOutput = [];
+                            const originalConsoleLog = console.log;
+                            console.log = (...args) => {
+                                consoleOutput.push(args.join(' '));
+                            };
+                            eval(files[currentFile]);
+                            console.log = originalConsoleLog;
+                            output.innerHTML += '<br>' + (consoleOutput.join('<br>') || 'No output');
+                        } catch (e) {
+                            output.innerHTML += '<br>Error: ' + e.message;
+                        }
+                    } else {
+                        alert('Run is only supported for JavaScript files.');
+                    }
+                    editor.layout();
+                }
+
+                function clearOutput() {
+                    const output = document.getElementById('output');
+                    output.innerHTML = '<button id="clear-output-btn">Clear</button>';
+                    output.style.display = 'none';
+                    document.getElementById('clear-output-btn').addEventListener('click', clearOutput);
+                    editor.layout();
+                }
+
+                function searchInFile() {
+                    try {
+                        const query = document.getElementById('search-bar').value;
+                        const model = editor.getModel();
+                        editor.setSelection(new monaco.Selection(0, 0, 0, 0));
+                        monaco.editor.removeDecorations('search-highlight');
+                        if (query) {
+                            const matches = model.findMatches(query, true, false, true, null, true);
+                            const decorations = matches.map(match => ({
+                                range: match.range,
+                                options: { inlineClassName: 'highlight' }
+                            }));
+                            editor.deltaDecorations([], decorations, 'search-highlight');
+                            if (matches.length > 0) {
+                                editor.revealRangeAtTop(matches[0].range);
+                            }
+                        }
+                    } catch (e) {
+                        console.error('Search Error:', e);
+                    }
+                }
+
+                function toggleSplitView() {
+                    try {
+                        isSplitView = !isSplitView;
+                        const editorDiv = document.getElementById('editor');
+                        const splitEditorDiv = document.getElementById('split-editor');
+                        if (isSplitView) {
+                            const availableFiles = Object.keys(files).filter(f => f !== currentFile);
+                            splitFile = availableFiles[0] || null;
+                            if (!splitFile) {
+                                alert('No other files available for split view.');
+                                isSplitView = false;
+                                return;
+                            }
+                            editorDiv.style.display = 'none';
+                            splitEditorDiv.style.display = 'block';
+                            updateSplitView();
+                        } else {
+                            splitEditorDiv.style.display = 'none';
+                            editorDiv.style.display = 'block';
+                            splitFile = null;
+                            editor.layout();
+                        }
+                        document.getElementById('split-view-btn').textContent = isSplitView ? 'Single View' : 'Split View';
+                    } catch (e) {
+                        console.error('Split View Error:', e);
+                    }
+                }
+
+                function updateSplitView() {
+                    if (isSplitView && splitFile) {
+                        const leftModel = monaco.editor.createModel(files[currentFile], getLanguage(currentFile));
+                        const rightModel = monaco.editor.createModel(files[splitFile], getLanguage(splitFile));
+                        splitEditor.setModel({
+                            original: leftModel,
+                            modified: rightModel
+                        });
+                        splitEditor.layout();
+                    }
+                }
+
+                function openSettings() {
+                    document.getElementById('settings-panel').style.display = 'flex';
+                }
+
+                function applySettings() {
+                    try {
+                        const fontSize = parseInt(document.getElementById('font-size').value);
+                        const tabSize = parseInt(document.getElementById('tab-size').value);
+                        const lineNumbers = document.getElementById('line-numbers').value;
+                        const wordWrap = document.getElementById('word-wrap').value;
+                        minSidebarWidth = parseInt(document.getElementById('sidebar-min-width').value);
+                        maxSidebarWidth = parseInt(document.getElementById('sidebar-max-width').value);
+                        sidebar.style.minWidth = `${minSidebarWidth}px`;
+                        sidebar.style.maxWidth = `${maxSidebarWidth}px`;
+                        if (fontSize >= 8 && fontSize <= 24 && minSidebarWidth >= 100 && minSidebarWidth <= 300 && maxSidebarWidth >= 300 && maxSidebarWidth <= 600) {
+                            editor.updateOptions({ fontSize, tabSize, lineNumbers, wordWrap });
+                            if (isSplitView) splitEditor.updateOptions({ fontSize, tabSize, lineNumbers, wordWrap });
+                        } else {
+                            alert('Invalid settings: Font size must be 8–24, min sidebar width 100–300, max sidebar width 300–600.');
+                        }
+                        closeSettings();
+                    } catch (e) {
+                        console.error('Apply Settings Error:', e);
+                    }
+                }
+
+                function closeSettings() {
+                    document.getElementById('settings-panel').style.display = 'none';
+                }
+
+                editor.onDidChangeCursorPosition(e => {
+                    const pos = e.position;
+                    document.getElementById('status-bar').textContent = `Ln ${pos.lineNumber}, Col ${pos.column}`;
+                });
+
+                updateFileExplorer();
+                editor.layout();
+            } catch (e) {
+                console.error('Editor Initialization Error:', e);
+            }
+        }
+    </script>
+</body>
+</html>
